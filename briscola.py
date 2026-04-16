@@ -13,6 +13,22 @@ POINTS = {
     10: 4,
 }
 
+STRENGTH = {
+    1: 10,
+    3: 9,
+    10: 8,
+    9: 7,
+    8: 6,
+    7: 5,
+    6: 4,
+    5: 3,
+    4: 2,
+    2: 1
+}
+
+PLAYER = 0
+OPPONENT = 1
+
 class Briscola(gym.Env):
     def __init__(self):
         super().__init__()
@@ -24,9 +40,17 @@ class Briscola(gym.Env):
             "table_card": gym.spaces.MultiBinary(40),
             "briscola": gym.spaces.MultiBinary(4),
             "played_cards": gym.spaces.MultiBinary(40),
+            "is_first": gym.spaces.Discrete(2),
         })
 
         self.deck = []
+        self.player_score = 0
+        self.opponent_score = 0
+        self.current_player = None
+        self.table = []
+        self.played_cards = []
+        self.briscola_card = None
+        self.briscola_suit = None
     
     def _create_deck(self):
         self.deck = []
@@ -40,50 +64,51 @@ class Briscola(gym.Env):
 
     def _draw(self, number):
         cards = []
-        for i in range(number):
+        for _ in range(number):
             cards.append(self.deck.pop())
         return cards
 
     def _opponent_policy(self):
         return random.choice(self.opponent_hand)
 
-    def _evaluate_trick(self, player_card, opponent_card):
-        # TODO: change player and opponent to first and second (as in order of play)
-        # TODO: fix value of cards with strenght
-        if player_card[0] == self.briscola_suit and opponent_card[0] == self.briscola_suit: # if both are briscola, take higher card
-            if player_card[1] > opponent_card[1]:
-                winner = "player"
-            else:
-                winner = "opponent"
-        elif player_card[0] == self.briscola_suit and opponent_card[0] != self.briscola_suit: # if one is briscola and the other is not, briscola wins
-            winner = "player"
-        elif player_card[0] != self.briscola_suit and opponent_card[0] == self.briscola_suit: 
-            winner = "opponent"
-        elif player_card[0] == opponent_card[0]: # if the second player matches the suit, the higher card wins
-            if player_card[1] > opponent_card[1]:
-                winner = "player"
-            else:
-                winner = "opponent"
-        elif player_card[0] != opponent_card[0]: # otherwise wins the first player
-            winner = "player"
+    def _evaluate_trick(self, first_card, second_card):
+        suit1, rank1 = first_card
+        suit2, rank2 = second_card
 
-        points = 0
-        if player_card[1] in POINTS:
-            points += POINTS[player_card[1]]
-        if opponent_card[1] in POINTS:
-            points += POINTS[opponent_card[1]]
+        strength1 = STRENGTH[rank1]
+        strength2 = STRENGTH[rank2]
+
+        if suit1 == suit2:
+            winner = "first" if strength1 > strength2 else "second"
+        else:
+            if suit1 == self.briscola_suit:
+                winner = "first"
+            elif suit2 == self.briscola_suit:
+                winner = "second"
+            else:
+                winner = "first"
+
+        points = POINTS.get(rank1, 0) + POINTS.get(rank2, 0)
 
         return winner, points
     
     def _draw_phase(self, winner):
-        # TODO: handle the last turn of drawing
-        if len(self.deck) > 0:
+        if len(self.deck) > 1:
             if winner == "player":
                 self.player_hand.append(self.deck.pop())
                 self.opponent_hand.append(self.deck.pop())
             else:
                 self.opponent_hand.append(self.deck.pop())
                 self.player_hand.append(self.deck.pop())
+        elif len(self.deck) == 1:
+            if winner == "player":
+                self.player_hand.append(self.deck.pop())
+                self.opponent_hand.append(self.briscola_card)
+                self.briscola_card = None
+            else:
+                self.opponent_hand.append(self.deck.pop())
+                self.player_hand.append(self.briscola_card)
+                self.briscola_card = None
 
     def _encode_cards(self, cards):
         vec = np.zeros(40, dtype=np.int8)
@@ -97,12 +122,18 @@ class Briscola(gym.Env):
         vec[suit] = 1
         return vec
     
+    def _get_action_mask(self):
+        mask = [0] * 3
+        for i in range(len(self.player_hand)):
+            mask[i] = 1
+        return np.array(mask, dtype=np.int8)
+    
     def _get_obs(self):
         # Encode player's hand
         hand = self._encode_cards(self.player_hand)
 
         # Encode table (max 1 card visible to player)
-        # table_card = self._encode_cards(self.table) if len(self.table) > 0 else np.zeros(40, dtype=np.int8)
+        table_card = self._encode_cards(self.table) if len(self.table) > 0 else np.zeros(40, dtype=np.int8)
 
         # Encode briscola suit
         briscola = self._encode_suit(self.briscola_suit)
@@ -110,64 +141,122 @@ class Briscola(gym.Env):
         # Encode played cards
         played_cards = self._encode_cards(self.played_cards)
 
+        # Encode the order of play (1 is first, 0 is second)
+        is_first = 0 if len(self.table) == 0 else 1
+
         return {
             "hand": hand,
-            # "table_card": table_card,
+            "table_card": table_card,
             "briscola": briscola,
             "played_cards": played_cards,
+            "is_first": is_first,
         }
         
 
     def reset(self, seed = None):
         super().reset(seed=seed)
+        # Create the deck, shuffle it, and choose the first player
         self.deck = self._create_deck()
         self._shuffle()
+        self.player_score = 0
+        self.opponent_score = 0
+        self.current_player = random.choice(["player", "opponent"])
 
-        self.player_hand = self._draw(3)
-        self.opponent_hand = self._draw(3)
+        # Deal the cards based on the order
+        if self.current_player == "player":
+            self.player_hand = self._draw(3)
+            self.opponent_hand = self._draw(3)
+        else:
+            self.opponent_hand = self._draw(3)
+            self.player_hand = self._draw(3)
 
+        # Draw the Briscola
         self.briscola_card = self._draw(1)[0]
         self.briscola_suit = self.briscola_card[0]
 
-        self.played_cards = []
+        # Reset both the table and the played cards
         self.table = []
+        self.played_cards = []
+
+        # If the opponent is first, play already its turn
+        if self.current_player == "opponent":
+            first_card = self._opponent_policy()
+            self.opponent_hand.remove(first_card)
+            self.table.append(first_card)
 
         self.terminated = False
         self.truncated = False
 
+        # Get the observations of the initial state
         obs = self._get_obs()
-        return obs, {}
+        info = {"action_mask": self._get_action_mask()}
+        return obs, info
 
     def step(self, action):
         assert not self.terminated
         assert not self.truncated
 
-        # TODO: MAKE THE PLAY DEPEND ON THE WINNER
-        # Player plays a card
-        player_card = self.player_hand.pop(action)
-        self.table.append(player_card)
-        self.played_cards.append(player_card)
+        print(self.table)
 
-        # Opponent plays (simple policy for now)
-        opponent_card = self._opponent_policy() # TODO: choose whether to pop the card in the policy or right after
-        self.opponent_hand.remove(opponent_card)
-        self.table.append(opponent_card)
-        self.played_cards.append(opponent_card)
+        # The player is first
+        if self.current_player == "player":
+            first_card = self.player_hand.pop(action) # TODO: decide whether to keep first or change with the name of the player
+            self.table.append(first_card)
 
-        # Determine trick winner
-        winner, points = self._evaluate_trick(player_card, opponent_card)
+            second_card = self._opponent_policy()
+            self.opponent_hand.remove(second_card)
+            self.table.append(second_card)
 
+            first = "player"
+            second = "opponent"
+        # The player is second and the opponent has played
+        else:
+            first_card = self.table[0]
+
+            second_card = self.player_hand.pop(action)
+            self.table.append(second_card)
+
+            first = "opponent"
+            second = "player"
+
+        self.played_cards.extend(self.table)
+
+        winner, points = self._evaluate_trick(first_card, second_card)
+
+        # Map winner to actual player
+        winner = first if winner == "first" else second
+
+        # Assign reward based on win or loss
         reward = points if winner == "player" else -points
+        if winner == "player":
+            self.player_score += points
+        else:
+            self.opponent_score += points
 
-        # reset the table
-        self.table = []
+        # Update the current_player for the next turn
+        self.current_player = winner
 
-        # Draw new cards
+        # Draw phase
         self._draw_phase(winner)
 
-        # Check end of game
+        # Clear table
+        self.table = []
+
+        # Check if both the cards in the deck and in hand are finished
         if len(self.player_hand) == 0 and len(self.deck) == 0:
             self.terminated = True
 
+            reward += 30 * np.sign(self.player_score - self.opponent_score)
+
+            obs = self._get_obs()
+            return obs, reward, self.terminated, self.truncated, {}
+
+        # If opponent starts next → play immediately
+        if self.current_player == "opponent":
+            first_card = self._opponent_policy()
+            self.opponent_hand.remove(first_card)
+            self.table.append(first_card)
+
         obs = self._get_obs()
-        return obs, reward, self.terminated, self.truncated, {}
+        info = {"action_mask": self._get_action_mask()}
+        return obs, reward, self.terminated, self.truncated, info
