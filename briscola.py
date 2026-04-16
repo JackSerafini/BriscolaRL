@@ -1,4 +1,5 @@
 import random
+import numpy as np
 import gymnasium as gym
 
 SUITS = [0, 1, 2, 3] # 0: "Danari", 1: "Coppe", 2: "Spade", 3: "Bastoni"
@@ -38,15 +39,10 @@ class Briscola(gym.Env):
         random.shuffle(self.deck)
 
     def _draw(self, number):
-        # TODO: check the len of the deck?
         cards = []
         for i in range(number):
             cards.append(self.deck.pop())
         return cards
-    
-    def _get_obs(self):
-        # TODO
-        pass
 
     def _opponent_policy(self):
         return random.choice(self.opponent_hand)
@@ -88,6 +84,38 @@ class Briscola(gym.Env):
             else:
                 self.opponent_hand.append(self.deck.pop())
                 self.player_hand.append(self.deck.pop())
+
+    def _encode_cards(self, cards):
+        vec = np.zeros(40, dtype=np.int8)
+        for suit, rank in cards:
+            idx = suit * 10 + (rank - 1)
+            vec[idx] = 1
+        return vec
+    
+    def _encode_suit(self, suit):
+        vec = np.zeros(4, dtype=np.int8)
+        vec[suit] = 1
+        return vec
+    
+    def _get_obs(self):
+        # Encode player's hand
+        hand = self._encode_cards(self.player_hand)
+
+        # Encode table (max 1 card visible to player)
+        # table_card = self._encode_cards(self.table) if len(self.table) > 0 else np.zeros(40, dtype=np.int8)
+
+        # Encode briscola suit
+        briscola = self._encode_suit(self.briscola_suit)
+
+        # Encode played cards
+        played_cards = self._encode_cards(self.played_cards)
+
+        return {
+            "hand": hand,
+            # "table_card": table_card,
+            "briscola": briscola,
+            "played_cards": played_cards,
+        }
         
 
     def reset(self, seed = None):
@@ -115,17 +143,24 @@ class Briscola(gym.Env):
         assert not self.truncated
 
         # TODO: MAKE THE PLAY DEPEND ON THE WINNER
-        # 1. Player plays a card
+        # Player plays a card
         player_card = self.player_hand.pop(action)
+        self.table.append(player_card)
+        self.played_cards.append(player_card)
 
-        # 2. Opponent plays (simple policy for now)
+        # Opponent plays (simple policy for now)
         opponent_card = self._opponent_policy() # TODO: choose whether to pop the card in the policy or right after
-        # self.opponent_hand.remove(opponent_card)
+        self.opponent_hand.remove(opponent_card)
+        self.table.append(opponent_card)
+        self.played_cards.append(opponent_card)
 
         # Determine trick winner
         winner, points = self._evaluate_trick(player_card, opponent_card)
 
         reward = points if winner == "player" else -points
+
+        # reset the table
+        self.table = []
 
         # Draw new cards
         self._draw_phase(winner)
