@@ -5,26 +5,9 @@ import gymnasium as gym
 SUITS = [0, 1, 2, 3] # 0: "Danari", 1: "Coppe", 2: "Spade", 3: "Bastoni"
 RANKS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] # 1: "Asso", 8: "Fante", 9: "Cavallo", 10: "Re"
 
-POINTS = {
-    1: 11,
-    3: 10,
-    8: 2,
-    9: 3,
-    10: 4,
-}
+POINTS = {1: 11, 3: 10, 8: 2, 9: 3, 10: 4}
 
-STRENGTH = {
-    1: 10,
-    3: 9,
-    10: 8,
-    9: 7,
-    8: 6,
-    7: 5,
-    6: 4,
-    5: 3,
-    4: 2,
-    2: 1
-}
+STRENGTH = {1: 10, 3: 9, 10: 8, 9: 7, 8: 6, 7: 5, 6: 4, 5: 3, 4: 2, 2: 1}
 
 PLAYER = 0
 OPPONENT = 1
@@ -36,7 +19,8 @@ class Briscola(gym.Env):
         self.action_space = gym.spaces.Discrete(3)  # play 1 of 3 cards
 
         self.observation_space = gym.spaces.Dict({
-            "hand": gym.spaces.MultiBinary(40),
+            # "hand": gym.spaces.MultiBinary(40),
+            "hand": gym.spaces.MultiDiscrete([40, 40, 40]),
             "table_card": gym.spaces.MultiBinary(40),
             "briscola": gym.spaces.MultiBinary(4),
             "played_cards": gym.spaces.MultiBinary(40),
@@ -53,20 +37,13 @@ class Briscola(gym.Env):
         self.briscola_suit = None
     
     def _create_deck(self):
-        self.deck = []
-        for suit in SUITS:
-            for rank in RANKS:
-                self.deck.append((suit, rank))
-        return self.deck
+        return [(suit, rank) for suit in SUITS for rank in RANKS]
 
     def _shuffle(self):
         random.shuffle(self.deck)
 
-    def _draw(self, number):
-        cards = []
-        for _ in range(number):
-            cards.append(self.deck.pop())
-        return cards
+    def _draw(self, n):
+        return [self.deck.pop() for _ in range(n)]
 
     def _opponent_policy(self):
         return random.choice(self.opponent_hand)
@@ -80,13 +57,12 @@ class Briscola(gym.Env):
 
         if suit1 == suit2:
             winner = "first" if strength1 > strength2 else "second"
+        elif suit1 == self.briscola_suit:
+            winner = "first"
+        elif suit2 == self.briscola_suit:
+            winner = "second"
         else:
-            if suit1 == self.briscola_suit:
-                winner = "first"
-            elif suit2 == self.briscola_suit:
-                winner = "second"
-            else:
-                winner = "first"
+            winner = "first"
 
         points = POINTS.get(rank1, 0) + POINTS.get(rank2, 0)
 
@@ -110,6 +86,14 @@ class Briscola(gym.Env):
                 self.player_hand.append(self.briscola_card)
                 self.briscola_card = None
 
+    def _encode_hand(self):
+        hand_vec = np.full(3, -1, dtype=np.int32)  # -1 = empty slot
+
+        for i, (suit, rank) in enumerate(self.player_hand):
+            hand_vec[i] = suit * 10 + (rank - 1)
+
+        return hand_vec
+
     def _encode_cards(self, cards):
         vec = np.zeros(40, dtype=np.int8)
         for suit, rank in cards:
@@ -123,17 +107,15 @@ class Briscola(gym.Env):
         return vec
     
     def _get_action_mask(self):
-        mask = [0] * 3
-        for i in range(len(self.player_hand)):
-            mask[i] = 1
+        mask = [1 if i < len(self.player_hand) else 0 for i in range(3)]
         return np.array(mask, dtype=np.int8)
     
     def _get_obs(self):
         # Encode player's hand
-        hand = self._encode_cards(self.player_hand)
+        hand = self._encode_hand()
 
         # Encode table (max 1 card visible to player)
-        table_card = self._encode_cards(self.table) if len(self.table) > 0 else np.zeros(40, dtype=np.int8)
+        table_card = self._encode_cards(self.table)
 
         # Encode briscola suit
         briscola = self._encode_suit(self.briscola_suit)
@@ -142,7 +124,7 @@ class Briscola(gym.Env):
         played_cards = self._encode_cards(self.played_cards)
 
         # Encode the order of play (1 is first, 0 is second)
-        is_first = 0 if len(self.table) == 0 else 1
+        is_first = 1 if len(self.table) == 0 else 0
 
         return {
             "hand": hand,
@@ -155,11 +137,18 @@ class Briscola(gym.Env):
 
     def reset(self, seed = None):
         super().reset(seed=seed)
-        # Create the deck, shuffle it, and choose the first player
+        # Create the deck, shuffle it, and reset the score
         self.deck = self._create_deck()
         self._shuffle()
         self.player_score = 0
         self.opponent_score = 0
+        # Reset both the table and the played cards
+        self.table = []
+        self.played_cards = []
+        self.terminated = False
+        self.truncated = False
+
+        # Choose the first player
         self.current_player = random.choice(["player", "opponent"])
 
         # Deal the cards based on the order
@@ -174,33 +163,25 @@ class Briscola(gym.Env):
         self.briscola_card = self._draw(1)[0]
         self.briscola_suit = self.briscola_card[0]
 
-        # Reset both the table and the played cards
-        self.table = []
-        self.played_cards = []
-
         # If the opponent is first, play already its turn
         if self.current_player == "opponent":
             first_card = self._opponent_policy()
             self.opponent_hand.remove(first_card)
             self.table.append(first_card)
 
-        self.terminated = False
-        self.truncated = False
-
         # Get the observations of the initial state
         obs = self._get_obs()
-        info = {"action_mask": self._get_action_mask()}
+        info = {"action_masks": self._get_action_mask()}
         return obs, info
+    
 
     def step(self, action):
         assert not self.terminated
-        assert not self.truncated
-
-        print(self.table)
+        # assert not self.truncated
 
         # The player is first
         if self.current_player == "player":
-            first_card = self.player_hand.pop(action) # TODO: decide whether to keep first or change with the name of the player
+            first_card = self.player_hand.pop(action)
             self.table.append(first_card)
 
             second_card = self._opponent_policy()
@@ -221,10 +202,10 @@ class Briscola(gym.Env):
 
         self.played_cards.extend(self.table)
 
-        winner, points = self._evaluate_trick(first_card, second_card)
+        trick_winner, points = self._evaluate_trick(first_card, second_card)
 
         # Map winner to actual player
-        winner = first if winner == "first" else second
+        winner = first if trick_winner == "first" else second
 
         # Assign reward based on win or loss
         reward = points if winner == "player" else -points
@@ -235,7 +216,6 @@ class Briscola(gym.Env):
 
         # Update the current_player for the next turn
         self.current_player = winner
-
         # Draw phase
         self._draw_phase(winner)
 
@@ -249,7 +229,8 @@ class Briscola(gym.Env):
             reward += 30 * np.sign(self.player_score - self.opponent_score)
 
             obs = self._get_obs()
-            return obs, reward, self.terminated, self.truncated, {}
+            info = {"action_masks": self._get_action_mask()}
+            return obs, reward, self.terminated, self.truncated, info
 
         # If opponent starts next → play immediately
         if self.current_player == "opponent":
@@ -258,5 +239,5 @@ class Briscola(gym.Env):
             self.table.append(first_card)
 
         obs = self._get_obs()
-        info = {"action_mask": self._get_action_mask()}
+        info = {"action_masks": self._get_action_mask()}
         return obs, reward, self.terminated, self.truncated, info
