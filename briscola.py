@@ -19,6 +19,7 @@ class Briscola(gym.Env):
         # self.action_space = gym.spaces.Discrete(3)  # play 1 of 3 cards
         self.action_space = gym.spaces.Discrete(40)
 
+        # TODO: add the points that the agest has
         self.observation_space = gym.spaces.Dict({
             "hand": gym.spaces.MultiBinary(40),
             # "hand": gym.spaces.MultiDiscrete([40, 40, 40]),
@@ -31,7 +32,7 @@ class Briscola(gym.Env):
 
         self.deck = []
         self.player_score = 0
-        self.opponent_score = 0
+        self.opponent_score = 0 # not essential
         self.current_player = None
         self.table = []
         self.played_cards = []
@@ -48,6 +49,10 @@ class Briscola(gym.Env):
 
     def _draw(self, n):
         return [self.deck.pop() for _ in range(n)]
+    
+    def _reveal_briscola(self):
+        self.briscola_card = self.deck[0]
+        self.briscola_suit = self.briscola_card[0]
 
     def _opponent_policy(self):
         return random.choice(self.opponent_hand)
@@ -73,22 +78,23 @@ class Briscola(gym.Env):
         return winner, points
     
     def _draw_phase(self, winner):
-        if len(self.deck) > 1:
+        # if len(self.deck) > 1:
+        if len(self.deck) > 0:
             if winner == "player":
                 self.player_hand.append(self.deck.pop())
                 self.opponent_hand.append(self.deck.pop())
             else:
                 self.opponent_hand.append(self.deck.pop())
                 self.player_hand.append(self.deck.pop())
-        elif len(self.deck) == 1:
-            if winner == "player":
-                self.player_hand.append(self.deck.pop())
-                self.opponent_hand.append(self.briscola_card)
-                self.briscola_card = None
-            else:
-                self.opponent_hand.append(self.deck.pop())
-                self.player_hand.append(self.briscola_card)
-                self.briscola_card = None
+        # elif len(self.deck) == 1:
+        #     if winner == "player":
+        #         self.player_hand.append(self.deck.pop())
+        #         self.opponent_hand.append(self.briscola_card)
+        #         self.briscola_card = None
+        #     else:
+        #         self.opponent_hand.append(self.deck.pop())
+        #         self.player_hand.append(self.briscola_card)
+        #         self.briscola_card = None
 
     def _encode_hand(self):
         hand_vec = np.full(3, -1, dtype=np.int32)  # -1 = empty slot
@@ -173,8 +179,9 @@ class Briscola(gym.Env):
             self.player_hand = self._draw(3)
 
         # Draw the Briscola
-        self.briscola_card = self._draw(1)[0]
-        self.briscola_suit = self.briscola_card[0]
+        # self.briscola_card = self._draw(1)[0]
+        # self.briscola_suit = self.briscola_card[0]
+        self._reveal_briscola()
 
         # If the opponent is first, play already its turn
         if self.current_player == "opponent":

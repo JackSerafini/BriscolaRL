@@ -1,6 +1,6 @@
 import torch
 
-from agents import *
+from agents.random_agent import RandomAgent
 from briscola import Briscola
 
 device = torch.device(
