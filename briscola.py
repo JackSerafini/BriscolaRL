@@ -16,15 +16,17 @@ class Briscola(gym.Env):
     def __init__(self):
         super().__init__()
 
-        self.action_space = gym.spaces.Discrete(3)  # play 1 of 3 cards
+        # self.action_space = gym.spaces.Discrete(3)  # play 1 of 3 cards
+        self.action_space = gym.spaces.Discrete(40)
 
         self.observation_space = gym.spaces.Dict({
-            # "hand": gym.spaces.MultiBinary(40),
-            "hand": gym.spaces.MultiDiscrete([40, 40, 40]),
+            "hand": gym.spaces.MultiBinary(40),
+            # "hand": gym.spaces.MultiDiscrete([40, 40, 40]),
             "table_card": gym.spaces.MultiBinary(40),
             "briscola": gym.spaces.MultiBinary(4),
             "played_cards": gym.spaces.MultiBinary(40),
-            "is_first": gym.spaces.Discrete(2),
+            # "is_first": gym.spaces.Discrete(2),
+            "is_first": gym.spaces.MultiBinary(1),
         })
 
         self.deck = []
@@ -37,6 +39,8 @@ class Briscola(gym.Env):
         self.briscola_suit = None
     
     def _create_deck(self):
+        # deck = [(suit, rank) for suit in SUITS for rank in RANKS]
+        # return random.shuffle(deck)
         return [(suit, rank) for suit in SUITS for rank in RANKS]
 
     def _shuffle(self):
@@ -107,12 +111,21 @@ class Briscola(gym.Env):
         return vec
     
     def _get_action_mask(self):
-        mask = [1 if i < len(self.player_hand) else 0 for i in range(3)]
-        return np.array(mask, dtype=np.int8)
+        # mask = [1 if i < len(self.player_hand) else 0 for i in range(3)]
+        # return np.array(mask, dtype=np.int8)
+        mask = np.zeros(40, dtype=np.int8)
+        for suit, rank in self.player_hand:
+            idx = suit * 10 + (rank - 1)
+            mask[idx] = 1
+
+        # terminal state: hand is empty, make mask valid (arbitrary — never sampled)
+        if mask.sum() == 0:
+            mask[0] = 1
+        return mask
     
     def _get_obs(self):
         # Encode player's hand
-        hand = self._encode_hand()
+        hand = self._encode_cards(self.player_hand)
 
         # Encode table (max 1 card visible to player)
         table_card = self._encode_cards(self.table)
@@ -124,7 +137,7 @@ class Briscola(gym.Env):
         played_cards = self._encode_cards(self.played_cards)
 
         # Encode the order of play (1 is first, 0 is second)
-        is_first = 1 if len(self.table) == 0 else 0
+        is_first = np.array([1 if len(self.table) == 0 else 0], dtype=np.int8)
 
         return {
             "hand": hand,
@@ -179,9 +192,15 @@ class Briscola(gym.Env):
         assert not self.terminated
         # assert not self.truncated
 
+        card = (action // 10, (action % 10) + 1)
+        if card not in self.player_hand:
+            raise ValueError("Invalid action")
+
+        self.player_hand.remove(card)
+
         # The player is first
         if self.current_player == "player":
-            first_card = self.player_hand.pop(action)
+            first_card = card
             self.table.append(first_card)
 
             second_card = self._opponent_policy()
@@ -194,7 +213,7 @@ class Briscola(gym.Env):
         else:
             first_card = self.table[0]
 
-            second_card = self.player_hand.pop(action)
+            second_card = card
             self.table.append(second_card)
 
             first = "opponent"
@@ -226,7 +245,8 @@ class Briscola(gym.Env):
         if len(self.player_hand) == 0 and len(self.deck) == 0:
             self.terminated = True
 
-            reward += 30 * np.sign(self.player_score - self.opponent_score)
+            # TODO: choose best reward for winning the game
+            reward += 200 * np.sign(self.player_score - self.opponent_score)
 
             obs = self._get_obs()
             info = {"action_masks": self._get_action_mask()}
