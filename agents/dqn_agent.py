@@ -7,36 +7,8 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
-class QNet(nn.Module):
-    def __init__(self, n_obs, n_actions):
-        super(QNet, self).__init__()
-
-        self.net = nn.Sequential(
-            nn.Linear(n_obs, 128),
-            nn.ReLU(),
-            nn.Linear(128, 128),
-            nn.ReLU(),
-            nn.Linear(128, n_actions)
-        )
-
-    def forward(self, x):
-        return self.net(x)
-
-class DQNAgent():
-    def __init__(self, n_obs, n_actions, lr = 1e-3):
-        # self.n_obs = n_obs
-        self.n_actions = n_actions
-
-        self.policy_net = QNet(n_obs, n_actions)
-        self.target_net = QNet(n_obs, n_actions)
-        self.target_net.load_state_dict(self.policy_net.state_dict())
-
-        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
-
-
 Transition = namedtuple('Transition',
                         ('state', 'action', 'next_state', 'reward'))
-
 
 class ReplayMemory(object):
     def __init__(self, capacity):
@@ -51,6 +23,37 @@ class ReplayMemory(object):
 
     def __len__(self):
         return len(self.memory)
+
+class QNet(nn.Module):
+    def __init__(self, n_obs, n_actions = 40):
+        """
+        n_obs: it is the number of observations at each state (40 (hand) + 40 (table) + 4 (briscola suit) + 40 (played) + 1 (turn) = 125)
+        n_actions: it is the card to play from the hand -> hand represented as 40-array of 0s and 1s
+        """
+        super(QNet, self).__init__()
+
+        self.net = nn.Sequential(
+            nn.Linear(n_obs, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, n_actions)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+class DQNAgent():
+    def __init__(self, n_obs, n_actions, lr = 1e-3):
+        self.n_actions = n_actions
+
+        self.policy_net = QNet(n_obs, n_actions)
+        self.target_net = QNet(n_obs, n_actions)
+        self.target_net.load_state_dict(self.policy_net.state_dict())
+
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
 
 
 class DQN(nn.Module):
