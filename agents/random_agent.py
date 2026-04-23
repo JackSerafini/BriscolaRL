@@ -1,12 +1,12 @@
 import numpy as np
 
 class RandomAgent():
-    def act(self, obs):
+    def act(self, state):
         """
-        obs: environment observation (not used here)
+        state: environment observation (not used here)
         action_mask: array like [1,1,0] for valid moves
         """
-        valid_actions = np.where(obs['hand'] == 1)[0]
+        valid_actions = np.where(state['hand'] == 1)[0]
         return np.random.choice(valid_actions)
 
     def learn(self):

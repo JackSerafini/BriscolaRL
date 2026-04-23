@@ -22,11 +22,9 @@ class Briscola(gym.Env):
         # TODO: add the points that the agest has
         self.observation_space = gym.spaces.Dict({
             "hand": gym.spaces.MultiBinary(40),
-            # "hand": gym.spaces.MultiDiscrete([40, 40, 40]),
             "table_card": gym.spaces.MultiBinary(40),
             "briscola": gym.spaces.MultiBinary(4),
             "played_cards": gym.spaces.MultiBinary(40),
-            # "is_first": gym.spaces.Discrete(2),
             "is_first": gym.spaces.MultiBinary(1),
         })
 
@@ -39,8 +37,6 @@ class Briscola(gym.Env):
         self.briscola_suit = None
     
     def _create_deck(self):
-        # deck = [(suit, rank) for suit in SUITS for rank in RANKS]
-        # return random.shuffle(deck)
         return [(suit, rank) for suit in SUITS for rank in RANKS]
 
     def _shuffle(self):
@@ -157,8 +153,6 @@ class Briscola(gym.Env):
             self.player_hand = self._draw(3)
 
         # Draw the Briscola
-        # self.briscola_card = self._draw(1)[0]
-        # self.briscola_suit = self.briscola_card[0]
         self._reveal_briscola()
 
         # If the opponent is first, play its turn
