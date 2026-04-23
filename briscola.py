@@ -65,8 +65,8 @@ class Briscola(gym.Env):
 
         if suit1 == suit2:
             winner = "first" if strength1 > strength2 else "second"
-        elif suit1 == self.briscola_suit:
-            winner = "first"
+        # elif suit1 == self.briscola_suit: # TODO: understand if it's optional
+        #     winner = "first"
         elif suit2 == self.briscola_suit:
             winner = "second"
         else:
@@ -97,18 +97,16 @@ class Briscola(gym.Env):
         vec[suit] = 1
         return vec
     
-    def _get_action_mask(self):
-        # mask = [1 if i < len(self.player_hand) else 0 for i in range(3)]
-        # return np.array(mask, dtype=np.int8)
-        mask = np.zeros(40, dtype=np.int8)
-        for suit, rank in self.player_hand:
-            idx = suit * 10 + (rank - 1)
-            mask[idx] = 1
+    # def _get_action_mask(self):
+    #     mask = np.zeros(40, dtype=np.int8)
+    #     for suit, rank in self.player_hand:
+    #         idx = suit * 10 + (rank - 1)
+    #         mask[idx] = 1
 
-        # terminal state: hand is empty, make mask valid (arbitrary — never sampled)
-        if mask.sum() == 0:
-            mask[0] = 1
-        return mask
+    #     # terminal state: hand is empty, make mask valid (arbitrary — never sampled)
+    #     if mask.sum() == 0:
+    #         mask[0] = 1
+    #     return mask
     
     def _get_obs(self):
         # Encode player's hand
@@ -163,7 +161,7 @@ class Briscola(gym.Env):
         # self.briscola_suit = self.briscola_card[0]
         self._reveal_briscola()
 
-        # If the opponent is first, play already its turn
+        # If the opponent is first, play its turn
         if self.current_player == "opponent":
             first_card = self._opponent_policy()
             self.opponent_hand.remove(first_card)
@@ -171,8 +169,8 @@ class Briscola(gym.Env):
 
         # Get the observations of the initial state
         obs = self._get_obs()
-        info = {"action_masks": self._get_action_mask()}
-        return obs, info
+        # info = {"action_masks": self._get_action_mask()}
+        return obs, {}
     
 
     def step(self, action):
@@ -235,8 +233,8 @@ class Briscola(gym.Env):
             reward += 200 * sign
 
             obs = self._get_obs()
-            info = {"action_masks": self._get_action_mask()}
-            return obs, reward, self.terminated, self.truncated, info
+            # info = {"action_masks": self._get_action_mask()}
+            return obs, reward, self.terminated, self.truncated, {}
 
         # If opponent starts next → play immediately
         if self.current_player == "opponent":
@@ -245,5 +243,5 @@ class Briscola(gym.Env):
             self.table.append(first_card)
 
         obs = self._get_obs()
-        info = {"action_masks": self._get_action_mask()}
-        return obs, reward, self.terminated, self.truncated, info
+        # info = {"action_masks": self._get_action_mask()}
+        return obs, reward, self.terminated, self.truncated, {}
