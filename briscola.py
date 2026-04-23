@@ -32,7 +32,6 @@ class Briscola(gym.Env):
 
         self.deck = []
         self.player_score = 0
-        self.opponent_score = 0 # not essential
         self.current_player = None
         self.table = []
         self.played_cards = []
@@ -78,7 +77,6 @@ class Briscola(gym.Env):
         return winner, points
     
     def _draw_phase(self, winner):
-        # if len(self.deck) > 1:
         if len(self.deck) > 0:
             if winner == "player":
                 self.player_hand.append(self.deck.pop())
@@ -86,23 +84,6 @@ class Briscola(gym.Env):
             else:
                 self.opponent_hand.append(self.deck.pop())
                 self.player_hand.append(self.deck.pop())
-        # elif len(self.deck) == 1:
-        #     if winner == "player":
-        #         self.player_hand.append(self.deck.pop())
-        #         self.opponent_hand.append(self.briscola_card)
-        #         self.briscola_card = None
-        #     else:
-        #         self.opponent_hand.append(self.deck.pop())
-        #         self.player_hand.append(self.briscola_card)
-        #         self.briscola_card = None
-
-    def _encode_hand(self):
-        hand_vec = np.full(3, -1, dtype=np.int32)  # -1 = empty slot
-
-        for i, (suit, rank) in enumerate(self.player_hand):
-            hand_vec[i] = suit * 10 + (rank - 1)
-
-        return hand_vec
 
     def _encode_cards(self, cards):
         vec = np.zeros(40, dtype=np.int8)
@@ -160,7 +141,6 @@ class Briscola(gym.Env):
         self.deck = self._create_deck()
         self._shuffle()
         self.player_score = 0
-        self.opponent_score = 0
         # Reset both the table and the played cards
         self.table = []
         self.played_cards = []
@@ -237,8 +217,6 @@ class Briscola(gym.Env):
         reward = points if winner == "player" else -points
         if winner == "player":
             self.player_score += points
-        else:
-            self.opponent_score += points
 
         # Update the current_player for the next turn
         self.current_player = winner
@@ -253,7 +231,8 @@ class Briscola(gym.Env):
             self.terminated = True
 
             # TODO: choose best reward for winning the game
-            reward += 200 * np.sign(self.player_score - self.opponent_score)
+            sign = np.sign(self.player_score - 60)
+            reward += 200 * sign
 
             obs = self._get_obs()
             info = {"action_masks": self._get_action_mask()}
