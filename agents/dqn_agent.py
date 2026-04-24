@@ -66,6 +66,7 @@ class QNet(nn.Module):
 
 class DQN_Agent():
     def __init__(self, env: Briscola, device: torch.device,
+                 savefile = None,
                  lr: float = LR,
                  batch_size: int = BATCH_SIZE,
                  buffer_size: int = 100_000,
@@ -85,6 +86,8 @@ class DQN_Agent():
 
         n_obs = gym.spaces.flatdim(self.env.observation_space)
         self.policy_net = QNet(n_obs, self.n_actions).to(self.device)
+        if savefile:
+            self.policy_net.load_state_dict(savefile)
         self.target_net = QNet(n_obs, self.n_actions).to(self.device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval() # Target network is for evaluation only of course
@@ -106,8 +109,7 @@ class DQN_Agent():
                 mask = torch.tensor(state["hand"], dtype = torch.bool, device = self.device).unsqueeze(0)
                 q_values[mask == 0] = -1e9 # Mask invalid actions
 
-                # .max(1) gets the maximum value by row
-                # [0] is the actual value, [1] is the index of such value -> the action
+                # .max(1) gets the maximum value by row -> [0] is the actual value, [1] is the index of such value (the action)
                 return q_values.max(1)[1].view(1, 1)
         # EXPLORE
         else:
