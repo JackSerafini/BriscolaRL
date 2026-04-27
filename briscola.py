@@ -16,10 +16,8 @@ class Briscola(gym.Env):
     def __init__(self):
         super().__init__()
 
-        # self.action_space = gym.spaces.Discrete(3)  # play 1 of 3 cards
         self.action_space = gym.spaces.Discrete(40)
 
-        # TODO: add the points that the agest has
         self.observation_space = gym.spaces.Dict({
             "hand": gym.spaces.MultiBinary(40),
             "table_card": gym.spaces.MultiBinary(40),
@@ -61,8 +59,6 @@ class Briscola(gym.Env):
 
         if suit1 == suit2:
             winner = "first" if strength1 > strength2 else "second"
-        # elif suit1 == self.briscola_suit: # TODO: understand if it's optional
-        #     winner = "first"
         elif suit2 == self.briscola_suit:
             winner = "second"
         else:
@@ -92,17 +88,6 @@ class Briscola(gym.Env):
         vec = np.zeros(4, dtype=np.int8)
         vec[suit] = 1
         return vec
-    
-    # def _get_action_mask(self):
-    #     mask = np.zeros(40, dtype=np.int8)
-    #     for suit, rank in self.player_hand:
-    #         idx = suit * 10 + (rank - 1)
-    #         mask[idx] = 1
-
-    #     # terminal state: hand is empty, make mask valid (arbitrary — never sampled)
-    #     if mask.sum() == 0:
-    #         mask[0] = 1
-    #     return mask
     
     def _get_obs(self):
         # Encode player's hand
@@ -163,7 +148,6 @@ class Briscola(gym.Env):
 
         # Get the observations of the initial state
         obs = self._get_obs()
-        # info = {"action_masks": self._get_action_mask()}
         return obs, {}
     
 
@@ -227,15 +211,13 @@ class Briscola(gym.Env):
             reward += 200 * sign
 
             obs = self._get_obs()
-            # info = {"action_masks": self._get_action_mask()}
             return obs, reward, self.terminated, self.truncated, {}
 
-        # If opponent starts next → play immediately
+        # If the opponent is first, play its turn
         if self.current_player == "opponent":
             first_card = self._opponent_policy()
             self.opponent_hand.remove(first_card)
             self.table.append(first_card)
 
         obs = self._get_obs()
-        # info = {"action_masks": self._get_action_mask()}
         return obs, reward, self.terminated, self.truncated, {}

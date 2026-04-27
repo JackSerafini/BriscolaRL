@@ -9,10 +9,10 @@ import torch.nn.functional as F
 from briscola import Briscola
 
 BATCH_SIZE = 128 # number of transitions sampled from the replay buffer
+BUFFER_SIZE = 100_000
 GAMMA = 0.999 # discount factor
 EPS_START = 0.9 # starting value of epsilon
 EPS_END = 0.01 # final value of epsilon
-# EPS_DECAY = 50_000 # the rate of exponential decay of epsilon, higher means a slower decay
 EPS_DECAY = 0.995 # the rate of exponential decay of epsilon, higher means a slower decay
 TAU = 0.005 # update rate of the target network
 LR = 3e-4 # the learning rate of the ``AdamW`` optimizer
@@ -64,12 +64,13 @@ class DQN_Agent():
                  savefile = None,
                  lr: float = LR,
                  batch_size: int = BATCH_SIZE,
-                 buffer_size: int = 100_000,
+                 buffer_size: int = BUFFER_SIZE,
                  epsilon_start: float = EPS_START, epsilon_end: float = EPS_END, epsilon_decay: float = EPS_DECAY,
                  gamma: float = GAMMA,
                  tau: float = TAU):
         self.env = env
         self.n_actions = self.env.action_space.n
+        n_obs = gym.spaces.flatdim(self.env.observation_space)
         self.batch_size = batch_size
         self.epsilon = epsilon_start
         self.eps_end = epsilon_end
@@ -79,13 +80,12 @@ class DQN_Agent():
 
         self.device = device
 
-        n_obs = gym.spaces.flatdim(self.env.observation_space)
         self.policy_net = QNet(n_obs, self.n_actions).to(self.device)
         if savefile:
             self.policy_net.load_state_dict(savefile)
         self.target_net = QNet(n_obs, self.n_actions).to(self.device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
-        self.target_net.eval() # Target network is for evaluation only of course
+        self.target_net.eval() # Target network is for evaluation
 
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr, amsgrad=True)
         self.buffer = ReplayMemory(buffer_size)
