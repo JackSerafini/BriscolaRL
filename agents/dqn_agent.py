@@ -17,7 +17,6 @@ EPS_DECAY = 0.995 # the rate of exponential decay of epsilon, higher means a slo
 TAU = 0.005 # update rate of the target network
 LR = 3e-4 # the learning rate of the ``AdamW`` optimizer
 
-# Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward', 'next_mask'))
 
 class ReplayMemory(object):
@@ -44,11 +43,7 @@ def state_to_tensor(state):
     ]).unsqueeze(0)
 
 class QNet(nn.Module):
-    def __init__(self, n_obs: int, n_actions: int = 40):
-        """
-        n_obs: it is the number of observations at each state (40 (hand) + 40 (table) + 4 (briscola suit) + 40 (played) + 1 (turn) = 125)
-        n_actions: it is the card to play from the hand -> hand represented as 40-array of 0s and 1s
-        """
+    def __init__(self, n_obs: int = 125, n_actions: int = 40):
         super(QNet, self).__init__()
 
         self.net = nn.Sequential(
