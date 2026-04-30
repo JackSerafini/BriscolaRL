@@ -11,6 +11,23 @@ GAMMA = 0.99
 EPSILON_CLIP = 0.2
 EPOCHS = 10
 
+# We want to keep track of the state, action log probability of the action, reward and value of the critic of the action
+# Then compute Reward to go: R_tg = R_t + gamma R_t+1 + gamma^2 R_t+2 + ...
+# Then compute Advantage: A(s, a) = Q(s, a) - V(s), where Q is R_tg
+# Advantage used to decrease % of taking bad moves and viceversa
+
+# To optimize the critic net, we compute the loss (e.g., MSE): loss = 1/N sum_i (y_i - y^_i)^2,
+# where y_i is the R_tg and y^_i is the value of the critic net
+# At the end of training the estimated value V should approach the best possible action reward
+
+# To optimize the actor net, use the PPO clip objective:
+# L^CLIP(theta) = E_t[min[r_t(theta)A_t, clip(r_t(theta), 1 - eps, 1 + eps)A_t]],
+# where r is the probability ratio (function of the parameters) = action prob_current / action prob_old, A is the advantage
+# The expected value means taking all the trajectories and taking the average
+# We want to maximize the objective -> gradient ascent for the actor, instead of gradient descent
+
+# Repeat the optimization for n times and then repeat the whole process for T times
+
 def state_to_tensor(state):
     return torch.cat([
         torch.tensor(state["hand"], dtype = torch.float32),
@@ -34,8 +51,13 @@ class ActorCritic(nn.Module):
             nn.ReLU()
         )
 
-        self.actor = nn.Linear(128, n_actions)
-        self.critic = nn.Linear(128, 1)
+        self.actor = nn.Linear(128, n_actions) # Policy or Model
+        self.critic = nn.Linear(128, 1) # The output is the value of the total expected return
+        # -> at the end of training we expect this value to reach the best reward from that state
+        # Basically, given the state s, we compute the estimation of the total expected return,
+        # and each episode should improve this estimation until reach of the best value
+        # (at the beginning of training the value will be random, as are the weights)
+        # -> value used to improve the actor network
 
         # Orthogonal init — standard for PPO
         # for layer in self.trunk:
