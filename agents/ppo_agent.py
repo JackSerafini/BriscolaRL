@@ -11,6 +11,43 @@ GAMMA = 0.99
 EPSILON_CLIP = 0.2
 EPOCHS = 10
 
+# ── Hyperparameters ───────────────────────────────────────────
+GAE_LAMBDA    = 0.95
+VALUE_COEF    = 0.5
+ENTROPY_COEF  = 0.01
+BATCH_SIZE    = 64
+MAX_GRAD_NORM = 0.5
+ROLLOUT_STEPS = 2048
+# ─────────────────────────────────────────────────────────────
+
+class RolloutBuffer:
+    """
+    Stores one rollout, then discards after update.
+    """
+    def __init__(self):
+        self.states    = []
+        self.actions   = []
+        self.log_probs = []
+        self.rewards   = []
+        self.values    = []
+        self.masks     = []
+        self.dones     = []
+
+    def push(self, state, action, log_prob, reward, value, mask, done):
+        self.states.append(state)
+        self.actions.append(action)
+        self.log_probs.append(log_prob)
+        self.rewards.append(reward)
+        self.values.append(value)
+        self.masks.append(mask)
+        self.dones.append(done)
+
+    def clear(self):
+        self.__init__()
+
+    def __len__(self):
+        return len(self.rewards)
+
 # We want to keep track of the state, action log probability of the action, reward and value of the critic of the action
 # Then compute Reward to go: R_tg = R_t + gamma R_t+1 + gamma^2 R_t+2 + ...
 # Then compute Advantage: A(s, a) = Q(s, a) - V(s), where Q is R_tg
@@ -103,12 +140,46 @@ class PPO_Agent():
         self.rewards = []
         self.dones = []
 
+    # def __init__(self, env: Briscola, device: torch.device,
+    #              savefile=None,
+    #              lr:            float = LR,
+    #              gamma:         float = GAMMA,
+    #              gae_lambda:    float = GAE_LAMBDA,
+    #              clip_eps:      float = EPSILON_CLIP,
+    #              value_coef:    float = VALUE_COEF,
+    #              entropy_coef:  float = ENTROPY_COEF,
+    #              n_epochs:      int   = EPOCHS,
+    #              batch_size:    int   = BATCH_SIZE,
+    #              max_grad_norm: float = MAX_GRAD_NORM,
+    #              rollout_steps: int   = ROLLOUT_STEPS):
+
+    #     self.env           = env
+    #     self.n_actions     = env.action_space.n
+    #     self.device        = device
+    #     self.gamma         = gamma
+    #     self.gae_lambda    = gae_lambda
+    #     self.clip_eps      = clip_eps
+    #     self.value_coef    = value_coef
+    #     self.entropy_coef  = entropy_coef
+    #     self.n_epochs      = n_epochs
+    #     self.batch_size    = batch_size
+    #     self.max_grad_norm = max_grad_norm
+    #     self.rollout_steps = rollout_steps
+
+    #     n_obs = gym.spaces.flatdim(env.observation_space)
+    #     self.net = ActorCritic(n_obs, self.n_actions).to(device)
+    #     if savefile:
+    #         self.net.load_state_dict(savefile)
+
+    #     self.optimizer = optim.Adam(self.net.parameters(), lr=lr, eps=1e-5)
+    #     self.buffer    = RolloutBuffer()
+
     def select_action(self, state):
         state_tensor = state_to_tensor(state).to(self.device)
 
         logits, value = self.policy(state_tensor)
 
-        # MASK invalid actions
+        # Mask invalid actions
         mask = torch.tensor(state["hand"], dtype=torch.bool, device=self.device).unsqueeze(0)
         logits[~mask] = -1e9
 
@@ -116,12 +187,19 @@ class PPO_Agent():
 
         dist = torch.distributions.Categorical(probs)
         action = dist.sample()
+        log_prob = dist.log_prob(action)
+        # entropy = dist.entropy() # TODO: add the entropy?
 
         self.states.append(state_tensor)
         self.actions.append(action)
-        self.logprobs.append(dist.log_prob(action))
+        self.logprobs.append(log_prob)
+        # TODO: add value?
 
-        # TODO: add the entropy?
+        # # Stash these so the training loop can push them to the buffer
+        # self._last_log_prob = log_prob.item()
+        # self._last_value    = value.item()
+
+        # return action.view(1, 1)
 
         return action.item()
 
@@ -136,6 +214,26 @@ class PPO_Agent():
             returns.insert(0, G)
 
         return torch.tensor(returns, dtype=torch.float32, device=self.device)
+    
+    def _compute_gae(self, last_value: float):
+        """Generalized Advantage Estimation over the current rollout."""
+        T          = len(self.buffer)
+        advantages = torch.zeros(T, device=self.device)
+        last_gae   = 0.0
+  
+        rewards = self.buffer.rewards
+        values  = self.buffer.values
+        dones   = self.buffer.dones
+
+        for t in reversed(range(T)):
+            next_val  = last_value if t == T - 1 else values[t + 1]
+            not_done  = 1.0 - dones[t]
+            delta     = rewards[t] + self.gamma * next_val * not_done - values[t]
+            last_gae  = delta + self.gamma * self.gae_lambda * not_done * last_gae
+            advantages[t] = last_gae
+
+        returns = advantages + torch.tensor(values, device=self.device)
+        return advantages, returns
     
     def update(self):
         returns = self.compute_returns()
@@ -184,176 +282,6 @@ class PPO_Agent():
         self.rewards.clear()
         self.dones.clear()
 
-
-# ── Hyperparameters ───────────────────────────────────────────
-GAE_LAMBDA    = 0.95
-VALUE_COEF    = 0.5
-ENTROPY_COEF  = 0.01
-BATCH_SIZE    = 64
-MAX_GRAD_NORM = 0.5
-ROLLOUT_STEPS = 2048
-# ─────────────────────────────────────────────────────────────
-
-
-class ActorCritic(nn.Module):
-    """
-    Shared trunk → policy head (logits) + value head (scalar).
-    Mirrors QNet's structure but with two output heads.
-    """
-    def __init__(self, n_obs: int = 125, n_actions: int = 40):
-        super().__init__()
-
-        self.trunk = nn.Sequential(
-            nn.Linear(n_obs, 256),
-            nn.Tanh(),           # Tanh > ReLU for PPO on structured inputs
-            nn.Linear(256, 256),
-            nn.Tanh(),
-            nn.Linear(256, 128),
-            nn.Tanh(),
-        )
-        self.policy_head = nn.Linear(128, n_actions)
-        self.value_head  = nn.Linear(128, 1)
-
-        # Orthogonal init — standard for PPO
-        for layer in self.trunk:
-            if isinstance(layer, nn.Linear):
-                nn.init.orthogonal_(layer.weight, gain=np.sqrt(2))
-                nn.init.zeros_(layer.bias)
-        nn.init.orthogonal_(self.policy_head.weight, gain=0.01)
-        nn.init.orthogonal_(self.value_head.weight,  gain=1.0)
-        nn.init.zeros_(self.policy_head.bias)
-        nn.init.zeros_(self.value_head.bias)
-
-    def forward(self, x):
-        h = self.trunk(x)
-        return self.policy_head(h), self.value_head(h).squeeze(-1)
-
-    def _safe_dist(self, logits, mask):
-        """Mask invalid actions, falling back to all-valid on empty mask (terminal states)."""
-        all_invalid = ~mask.any(dim=-1, keepdim=True)
-        safe_mask   = mask | all_invalid.expand_as(mask)
-        logits      = logits.masked_fill(~safe_mask, float('-inf'))
-        return torch.distributions.Categorical(logits=logits)
-
-    def get_action(self, x, mask):
-        """Used during rollout collection."""
-        logits, value = self.forward(x)
-        dist     = self._safe_dist(logits, mask)
-        action   = dist.sample()
-        log_prob = dist.log_prob(action)
-        entropy  = dist.entropy()
-        return action, log_prob, entropy, value
-
-    def evaluate(self, x, mask, action):
-        """Used during the update phase — recomputes log_prob under current policy."""
-        logits, value = self.forward(x)
-        dist     = self._safe_dist(logits, mask)
-        log_prob = dist.log_prob(action)
-        entropy  = dist.entropy()
-        return log_prob, entropy, value
-
-
-class RolloutBuffer:
-    """
-    Stores one rollout, then discards after update.
-    Equivalent to ReplayMemory but on-policy (no sampling — use everything).
-    """
-    def __init__(self):
-        self.states    = []
-        self.actions   = []
-        self.log_probs = []
-        self.rewards   = []
-        self.values    = []
-        self.masks     = []
-        self.dones     = []
-
-    def push(self, state, action, log_prob, reward, value, mask, done):
-        self.states.append(state)
-        self.actions.append(action)
-        self.log_probs.append(log_prob)
-        self.rewards.append(reward)
-        self.values.append(value)
-        self.masks.append(mask)
-        self.dones.append(done)
-
-    def clear(self):
-        self.__init__()
-
-    def __len__(self):
-        return len(self.rewards)
-
-
-class PPO_Agent:
-    def __init__(self, env: Briscola, device: torch.device,
-                 savefile=None,
-                 lr:            float = LR,
-                 gamma:         float = GAMMA,
-                 gae_lambda:    float = GAE_LAMBDA,
-                 clip_eps:      float = EPSILON_CLIP,
-                 value_coef:    float = VALUE_COEF,
-                 entropy_coef:  float = ENTROPY_COEF,
-                 n_epochs:      int   = EPOCHS,
-                 batch_size:    int   = BATCH_SIZE,
-                 max_grad_norm: float = MAX_GRAD_NORM,
-                 rollout_steps: int   = ROLLOUT_STEPS):
-
-        self.env           = env
-        self.n_actions     = env.action_space.n
-        self.device        = device
-        self.gamma         = gamma
-        self.gae_lambda    = gae_lambda
-        self.clip_eps      = clip_eps
-        self.value_coef    = value_coef
-        self.entropy_coef  = entropy_coef
-        self.n_epochs      = n_epochs
-        self.batch_size    = batch_size
-        self.max_grad_norm = max_grad_norm
-        self.rollout_steps = rollout_steps
-
-        n_obs = gym.spaces.flatdim(env.observation_space)
-        self.net = ActorCritic(n_obs, self.n_actions).to(device)
-        if savefile:
-            self.net.load_state_dict(savefile)
-
-        self.optimizer = optim.Adam(self.net.parameters(), lr=lr, eps=1e-5)
-        self.buffer    = RolloutBuffer()
-
-    def select_action(self, state):
-        """
-        Same signature as DQN_Agent.select_action — returns a [1,1] int tensor.
-        PPO has no epsilon; the policy's own entropy drives exploration.
-        """
-        state_t = state_to_tensor(state).to(self.device)
-        mask_t  = torch.tensor(state["hand"], dtype=torch.bool, device=self.device).unsqueeze(0)
-
-        with torch.no_grad():
-            action, log_prob, _, value = self.net.get_action(state_t, mask_t)
-
-        # Stash these so the training loop can push them to the buffer
-        self._last_log_prob = log_prob.item()
-        self._last_value    = value.item()
-
-        return action.view(1, 1)
-
-    def _compute_gae(self, last_value: float):
-        """Generalized Advantage Estimation over the current rollout."""
-        T          = len(self.buffer)
-        advantages = torch.zeros(T, device=self.device)
-        last_gae   = 0.0
-
-        rewards = self.buffer.rewards
-        values  = self.buffer.values
-        dones   = self.buffer.dones
-
-        for t in reversed(range(T)):
-            next_val  = last_value if t == T - 1 else values[t + 1]
-            not_done  = 1.0 - dones[t]
-            delta     = rewards[t] + self.gamma * next_val * not_done - values[t]
-            last_gae  = delta + self.gamma * self.gae_lambda * not_done * last_gae
-            advantages[t] = last_gae
-
-        returns = advantages + torch.tensor(values, device=self.device)
-        return advantages, returns
 
     def learn(self, last_value: float = 0.0):
         """
