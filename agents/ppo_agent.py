@@ -10,14 +10,14 @@ LR = 3e-4
 GAMMA = 0.99
 EPSILON_CLIP = 0.2
 EPOCHS = 10
+BATCH_SIZE = 64
 
 # ── Hyperparameters ───────────────────────────────────────────
 GAE_LAMBDA    = 0.95
 VALUE_COEF    = 0.5
 ENTROPY_COEF  = 0.01
-BATCH_SIZE    = 64
 MAX_GRAD_NORM = 0.5
-ROLLOUT_STEPS = 2048
+ROLLOUT_STEPS = 1024
 # ─────────────────────────────────────────────────────────────
 
 class RolloutBuffer:
@@ -25,21 +25,19 @@ class RolloutBuffer:
     Stores one rollout, then discards after update.
     """
     def __init__(self):
-        self.states    = []
-        self.actions   = []
-        self.log_probs = []
-        self.rewards   = []
-        self.values    = []
-        self.masks     = []
-        self.dones     = []
+        self.states = [] # Batch observations
+        self.actions = [] # Batch actions
+        self.log_probs = [] # Log-probabilities of each action
+        self.rewards = [] # Batch rewards
+        self.values = []
+        self.dones = []
 
-    def push(self, state, action, log_prob, reward, value, mask, done):
+    def push(self, state, action, log_prob, reward, value, done):
         self.states.append(state)
         self.actions.append(action)
         self.log_probs.append(log_prob)
         self.rewards.append(reward)
         self.values.append(value)
-        self.masks.append(mask)
         self.dones.append(done)
 
     def clear(self):
@@ -96,6 +94,7 @@ class ActorCritic(nn.Module):
         # (at the beginning of training the value will be random, as are the weights)
         # -> value used to improve the actor network
 
+        # TODO: understand if this is useful or not
         # Orthogonal init — standard for PPO
         # for layer in self.trunk:
         #     if isinstance(layer, nn.Linear):
@@ -109,6 +108,7 @@ class ActorCritic(nn.Module):
     def forward(self, x):
         x = self.shared(x)
         return self.actor(x), self.critic(x)
+        # TODO: understand what is the difference
         # return self.policy_head(x), self.value_head(x).squeeze(-1)
     
     
@@ -118,13 +118,25 @@ class PPO_Agent():
                  lr: float = LR,
                  gamma: float = GAMMA,
                  eps_clip = EPSILON_CLIP,
-                 epochs = EPOCHS):
+                 epochs = EPOCHS,
+                 batch_size: int = BATCH_SIZE,
+                 gae_lambda:    float = GAE_LAMBDA,
+                 value_coef:    float = VALUE_COEF,
+                 entropy_coef:  float = ENTROPY_COEF,
+                 max_grad_norm: float = MAX_GRAD_NORM,
+                 rollout_steps: int   = ROLLOUT_STEPS):
         self.env = env
         n_actions = env.action_space.n
         n_obs = gym.spaces.flatdim(env.observation_space)
         self.gamma = gamma
         self.eps_clip = eps_clip
         self.epochs = epochs
+        self.batch_size = batch_size
+        # self.gae_lambda    = gae_lambda
+        # self.value_coef    = value_coef
+        # self.entropy_coef  = entropy_coef
+        # self.max_grad_norm = max_grad_norm
+        # self.rollout_steps = rollout_steps
 
         self.device = device
 
@@ -134,45 +146,13 @@ class PPO_Agent():
         self.optimizer = optim.Adam(self.policy.parameters(), lr=lr)
 
         # buffer
+        self.buffer = RolloutBuffer()
         self.states = []
         self.actions = []
         self.logprobs = []
         self.rewards = []
         self.dones = []
 
-    # def __init__(self, env: Briscola, device: torch.device,
-    #              savefile=None,
-    #              lr:            float = LR,
-    #              gamma:         float = GAMMA,
-    #              gae_lambda:    float = GAE_LAMBDA,
-    #              clip_eps:      float = EPSILON_CLIP,
-    #              value_coef:    float = VALUE_COEF,
-    #              entropy_coef:  float = ENTROPY_COEF,
-    #              n_epochs:      int   = EPOCHS,
-    #              batch_size:    int   = BATCH_SIZE,
-    #              max_grad_norm: float = MAX_GRAD_NORM,
-    #              rollout_steps: int   = ROLLOUT_STEPS):
-
-    #     self.env           = env
-    #     self.n_actions     = env.action_space.n
-    #     self.device        = device
-    #     self.gamma         = gamma
-    #     self.gae_lambda    = gae_lambda
-    #     self.clip_eps      = clip_eps
-    #     self.value_coef    = value_coef
-    #     self.entropy_coef  = entropy_coef
-    #     self.n_epochs      = n_epochs
-    #     self.batch_size    = batch_size
-    #     self.max_grad_norm = max_grad_norm
-    #     self.rollout_steps = rollout_steps
-
-    #     n_obs = gym.spaces.flatdim(env.observation_space)
-    #     self.net = ActorCritic(n_obs, self.n_actions).to(device)
-    #     if savefile:
-    #         self.net.load_state_dict(savefile)
-
-    #     self.optimizer = optim.Adam(self.net.parameters(), lr=lr, eps=1e-5)
-    #     self.buffer    = RolloutBuffer()
 
     def select_action(self, state):
         state_tensor = state_to_tensor(state).to(self.device)
@@ -190,6 +170,7 @@ class PPO_Agent():
         log_prob = dist.log_prob(action)
         # entropy = dist.entropy() # TODO: add the entropy?
 
+        self.buffer.push(state_tensor, action, log_prob)
         self.states.append(state_tensor)
         self.actions.append(action)
         self.logprobs.append(log_prob)
@@ -214,6 +195,22 @@ class PPO_Agent():
             returns.insert(0, G)
 
         return torch.tensor(returns, dtype=torch.float32, device=self.device)
+    
+    def _compute_rewards_tg(self):
+        rtgs = []
+        last_rtg = 0
+
+        # TODO: understand whether to use the buffer or not
+        rewards = self.buffer.rewards
+        dones = self.buffer.dones
+
+        for reward, done in zip(reversed(rewards), reversed(dones)):
+            if done:
+                last_rtg = 0
+            last_rtg = reward + self.gamma * last_rtg
+            rtgs.insert(0, last_rtg)
+
+        return torch.tensor(rtgs, dtype=torch.float32, device=self.device)
     
     def _compute_gae(self, last_value: float):
         """Generalized Advantage Estimation over the current rollout."""
@@ -242,6 +239,7 @@ class PPO_Agent():
         actions = torch.stack(self.actions)
         old_logprobs = torch.stack(self.logprobs).detach()
 
+        # EPOCHS = the number of times we reuse the SAME rollout data
         for _ in range(self.epochs):
             logits, state_values = self.policy(states)
 
@@ -306,7 +304,7 @@ class PPO_Agent():
 
         # K epochs of minibatch updates
         indices = np.arange(T)
-        for _ in range(self.n_epochs):
+        for _ in range(self.epochs):
             np.random.shuffle(indices)
             for start in range(0, T, self.batch_size):
                 idx = indices[start : start + self.batch_size]
@@ -337,3 +335,20 @@ class PPO_Agent():
             "value_loss":  value_loss.item(),
             "entropy":    -entropy_loss.item(),
         }
+    
+    def learn(self):
+        states = torch.cat(self.buffer.states).to(self.device)
+        actions = torch.tensor(self.buffer.actions, dtype = torch.long, device = self.device)
+        old_logprobs = torch.tensor(self.buffer.log_probs, dtype = torch.float32, device = self.device)
+
+        rewards_to_go = self._compute_rewards_tg()
+
+        # N epochs of minibatch updates
+        for _ in range(self.epochs):
+            # TODO: shuffle indexes
+            for start in range(0, T, self.batch_size):
+                idx = indices[start : start + self.batch_size]
+
+                ratio = 1
+
+        self.buffer.clear()
