@@ -8,17 +8,13 @@ from briscola import Briscola
 
 LR = 3e-4
 GAMMA = 0.99
+GAE_LAMBDA = 0.95
 EPSILON_CLIP = 0.2
 EPOCHS = 10
 BATCH_SIZE = 64
-
-# ── Hyperparameters ───────────────────────────────────────────
-GAE_LAMBDA    = 0.95
-VALUE_COEF    = 0.5
-ENTROPY_COEF  = 0.01
+ENTROPY_COEF = 0.01
+VALUE_COEF = 0.5
 MAX_GRAD_NORM = 0.5
-ROLLOUT_STEPS = 1024
-# ─────────────────────────────────────────────────────────────
 
 class RolloutBuffer:
     """
@@ -27,14 +23,16 @@ class RolloutBuffer:
     def __init__(self):
         self.states = [] # Batch observations
         self.actions = [] # Batch actions
+        self.masks = [] # Batch masks
         self.log_probs = [] # Log-probabilities of each action
         self.rewards = [] # Batch rewards
-        self.values = []
+        self.values = [] # Batch values
         self.dones = []
 
-    def push(self, state, action, log_prob, reward, value, done):
+    def push(self, state, action, mask, log_prob, reward, value, done):
         self.states.append(state)
         self.actions.append(action)
+        self.masks.append(mask)
         self.log_probs.append(log_prob)
         self.rewards.append(reward)
         self.values.append(value)
@@ -107,8 +105,8 @@ class ActorCritic(nn.Module):
 
     def forward(self, x):
         x = self.shared(x)
-        return self.actor(x), self.critic(x)
         # TODO: understand what is the difference
+        return self.actor(x), self.critic(x)
         # return self.policy_head(x), self.value_head(x).squeeze(-1)
     
     
@@ -117,238 +115,138 @@ class PPO_Agent():
                  savefile = None,
                  lr: float = LR,
                  gamma: float = GAMMA,
+                 gae_lambda: float = GAE_LAMBDA,
                  eps_clip = EPSILON_CLIP,
                  epochs = EPOCHS,
                  batch_size: int = BATCH_SIZE,
-                 gae_lambda:    float = GAE_LAMBDA,
-                 value_coef:    float = VALUE_COEF,
-                 entropy_coef:  float = ENTROPY_COEF,
-                 max_grad_norm: float = MAX_GRAD_NORM,
-                 rollout_steps: int   = ROLLOUT_STEPS):
+                 entropy_coef: float = ENTROPY_COEF,
+                 value_coef: float = VALUE_COEF,
+                 max_grad_norm: float = MAX_GRAD_NORM):
         self.env = env
         n_actions = env.action_space.n
         n_obs = gym.spaces.flatdim(env.observation_space)
         self.gamma = gamma
+        self.gae_lambda = gae_lambda
         self.eps_clip = eps_clip
         self.epochs = epochs
         self.batch_size = batch_size
-        # self.gae_lambda    = gae_lambda
-        # self.value_coef    = value_coef
-        # self.entropy_coef  = entropy_coef
-        # self.max_grad_norm = max_grad_norm
-        # self.rollout_steps = rollout_steps
+        self.entropy_coef = entropy_coef
+        self.value_coef = value_coef
+        self.max_grad_norm = max_grad_norm
 
         self.device = device
 
-        self.policy = ActorCritic(n_obs, n_actions).to(device)
+        self.policy_net = ActorCritic(n_obs, n_actions).to(device)
         if savefile:
-            self.policy.load_state_dict(savefile)
-        self.optimizer = optim.Adam(self.policy.parameters(), lr=lr)
+            self.policy_net.load_state_dict(savefile)
+        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
 
-        # buffer
         self.buffer = RolloutBuffer()
-        self.states = []
-        self.actions = []
-        self.logprobs = []
-        self.rewards = []
-        self.dones = []
-
 
     def select_action(self, state):
         state_tensor = state_to_tensor(state).to(self.device)
 
-        logits, value = self.policy(state_tensor)
+        with torch.no_grad():
+            logits, value = self.policy_net(state_tensor)
 
         # Mask invalid actions
         mask = torch.tensor(state["hand"], dtype=torch.bool, device=self.device).unsqueeze(0)
-        logits[~mask] = -1e9
+        logits = logits.masked_fill(~mask, float('-inf'))
 
-        probs = torch.softmax(logits, dim=1)
-
-        dist = torch.distributions.Categorical(probs)
+        dist = torch.distributions.Categorical(logits = logits)
         action = dist.sample()
         log_prob = dist.log_prob(action)
-        # entropy = dist.entropy() # TODO: add the entropy?
+        entropy = dist.entropy()
 
-        self.buffer.push(state_tensor, action, log_prob)
-        self.states.append(state_tensor)
-        self.actions.append(action)
-        self.logprobs.append(log_prob)
-        # TODO: add value?
+        return action.item(), mask, log_prob.item(), entropy, value.item()
 
-        # # Stash these so the training loop can push them to the buffer
-        # self._last_log_prob = log_prob.item()
-        # self._last_value    = value.item()
+    def _compute_GAE_rewardstg_and_advantages(self, last_value: float):
+        """Generalized Advantage Estimation over the current rollout.  
+        GAE: How much better was this action than expected, taking into account future corrections?"""
+        length = len(self.buffer)
+        advantages = torch.zeros(length, device = self.device)
+        last_gae = 0.0
 
-        # return action.view(1, 1)
-
-        return action.item()
-
-    def compute_returns(self):
-        returns = []
-        G = 0
-
-        for r, done in zip(reversed(self.rewards), reversed(self.dones)):
-            if done:
-                G = 0
-            G = r + self.gamma * G
-            returns.insert(0, G)
-
-        return torch.tensor(returns, dtype=torch.float32, device=self.device)
-    
-    def _compute_rewards_tg(self):
-        rtgs = []
-        last_rtg = 0
-
-        # TODO: understand whether to use the buffer or not
         rewards = self.buffer.rewards
+        values = self.buffer.values
         dones = self.buffer.dones
 
-        for reward, done in zip(reversed(rewards), reversed(dones)):
-            if done:
-                last_rtg = 0
-            last_rtg = reward + self.gamma * last_rtg
-            rtgs.insert(0, last_rtg)
-
-        return torch.tensor(rtgs, dtype=torch.float32, device=self.device)
-    
-    def _compute_gae(self, last_value: float):
-        """Generalized Advantage Estimation over the current rollout."""
-        T          = len(self.buffer)
-        advantages = torch.zeros(T, device=self.device)
-        last_gae   = 0.0
-  
-        rewards = self.buffer.rewards
-        values  = self.buffer.values
-        dones   = self.buffer.dones
-
-        for t in reversed(range(T)):
-            next_val  = last_value if t == T - 1 else values[t + 1]
-            not_done  = 1.0 - dones[t]
-            delta     = rewards[t] + self.gamma * next_val * not_done - values[t]
-            last_gae  = delta + self.gamma * self.gae_lambda * not_done * last_gae
+        for t in reversed(range(length)):
+            next_val = last_value if t == length - 1 else values[t + 1]
+            not_done = 1.0 - dones[t]
+            delta = rewards[t] + self.gamma * next_val * not_done - values[t]
+            last_gae = delta + self.gamma * self.gae_lambda * not_done * last_gae
             advantages[t] = last_gae
 
-        returns = advantages + torch.tensor(values, device=self.device)
-        return advantages, returns
+        # Advantage: A(s, a) = Q(s, a) - V(s), where Q is R_tg -> Q(s, a) = A(s, a) + V(s)
+        rtgs = advantages + torch.tensor(values, device = self.device)
+        return advantages, rtgs
     
-    def update(self):
-        returns = self.compute_returns()
-
-        states = torch.cat(self.states)
-        actions = torch.stack(self.actions)
-        old_logprobs = torch.stack(self.logprobs).detach()
-
-        # EPOCHS = the number of times we reuse the SAME rollout data
-        for _ in range(self.epochs):
-            logits, state_values = self.policy(states)
-
-            # Recompute mask
-            masks = torch.cat([
-                torch.tensor(s["hand"], dtype=torch.bool, device=self.device).unsqueeze(0)
-                for s in self.states_raw  # you may want to store raw states too
-            ])
-            logits[~masks] = -1e9
-
-            probs = torch.softmax(logits, dim=1)
-            dist = torch.distributions.Categorical(probs)
-
-            logprobs = dist.log_prob(actions.squeeze())
-            entropy = dist.entropy()
-
-            ratios = torch.exp(logprobs - old_logprobs)
-
-            advantages = returns - state_values.squeeze().detach()
-
-            surr1 = ratios * advantages
-            surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
-
-            loss = (
-                -torch.min(surr1, surr2)
-                + 0.5 * (returns - state_values.squeeze())**2
-                - 0.01 * entropy
-            ).mean()
-
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
-
-        # clear buffer
-        self.states.clear()
-        self.actions.clear()
-        self.logprobs.clear()
-        self.rewards.clear()
-        self.dones.clear()
-
-
     def learn(self, last_value: float = 0.0):
         """
         Run K epochs of minibatch PPO updates on the collected rollout.
         Call this once per rollout (every `rollout_steps` steps), not every step.
         """
-        T = len(self.buffer)
-        if T == 0:
-            return {}
-
-        # Convert buffer to tensors
-        states    = torch.cat(self.buffer.states).to(self.device)
-        actions   = torch.tensor(self.buffer.actions,   dtype=torch.long,    device=self.device)
-        old_lp    = torch.tensor(self.buffer.log_probs, dtype=torch.float32, device=self.device)
-        masks     = torch.cat(self.buffer.masks).to(self.device)
-
-        with torch.no_grad():
-            advantages, returns = self._compute_gae(last_value)
-
-        # Normalize advantages
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-
-        # K epochs of minibatch updates
-        indices = np.arange(T)
-        for _ in range(self.epochs):
-            np.random.shuffle(indices)
-            for start in range(0, T, self.batch_size):
-                idx = indices[start : start + self.batch_size]
-
-                new_lp, entropy, new_val = self.net.evaluate(
-                    states[idx], masks[idx], actions[idx]
-                )
-
-                # Clipped surrogate loss
-                ratio  = torch.exp(new_lp - old_lp[idx])
-                surr1  = ratio * advantages[idx]
-                surr2  = torch.clamp(ratio, 1 - self.clip_eps, 1 + self.clip_eps) * advantages[idx]
-                policy_loss  = -torch.min(surr1, surr2).mean()
-                value_loss   =  0.5 * (new_val - returns[idx]).pow(2).mean()
-                entropy_loss = -entropy.mean()
-
-                loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss
-
-                self.optimizer.zero_grad()
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.max_grad_norm)
-                self.optimizer.step()
-
-        self.buffer.clear()
-
-        return {
-            "policy_loss": policy_loss.item(),
-            "value_loss":  value_loss.item(),
-            "entropy":    -entropy_loss.item(),
-        }
-    
-    def learn(self):
+        # YOU START BY TAKING THE EXPERIENCE FROM THE TRAINING, DOING ROLLOUT_STEPS AND PUSHING EACH STEP IN THE BUFFER
+        steps = len(self.buffer)
         states = torch.cat(self.buffer.states).to(self.device)
         actions = torch.tensor(self.buffer.actions, dtype = torch.long, device = self.device)
+        masks = torch.cat(self.buffer.masks).to(self.device)
         old_logprobs = torch.tensor(self.buffer.log_probs, dtype = torch.float32, device = self.device)
 
-        rewards_to_go = self._compute_rewards_tg()
+        with torch.no_grad():
+            advantages, rewards_tg = self._compute_GAE_rewardstg_and_advantages(last_value)
+        # Normalize advantages
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-9)
 
+        indices = np.arange(steps)
         # N epochs of minibatch updates
+        # EPOCHS = the number of times we reuse the SAME rollout data
         for _ in range(self.epochs):
-            # TODO: shuffle indexes
-            for start in range(0, T, self.batch_size):
-                idx = indices[start : start + self.batch_size]
+            # np.random.shuffle(indices)
+            # for start in range(0, steps, self.batch_size):
+                # idx = indices[start : start + self.batch_size]
 
-                ratio = 1
+                # logits, state_values = self.policy_net(states[idx])
+            logits, state_values = self.policy_net(states)
+                # mask = masks[idx]
+                # logits = logits.masked_fill(~mask, float('-inf'))
+            logits = logits.masked_fill(~masks, float('-inf'))
+
+                # probs = torch.softmax(logits, dim=1)
+                # dist = torch.distributions.Categorical(logits = logits)
+            dist = torch.distributions.Categorical(logits = logits)
+                # logprobs = dist.log_prob(actions[idx])
+            logprobs = dist.log_prob(actions)
+                # entropy = dist.entropy()
+            entropy = dist.entropy()
+
+                # Clipped surrogate loss
+                # ratio = torch.exp(logprobs - old_logprobs[idx])
+            ratio = torch.exp(logprobs - old_logprobs)
+
+                # surr1 = ratio * advantages[idx]
+            surr1 = ratio * advantages
+                # surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantages[idx]
+            surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
+
+                # policy_loss = -torch.min(surr1, surr2).mean()
+            policy_loss = -torch.min(surr1, surr2).mean()
+                # value_loss = 0.5 * (state_values.squeeze() - rewards_tg[idx]).pow(2).mean()
+            value_loss = 0.5 * (state_values.squeeze() - rewards_tg).pow(2).mean()
+                # entropy_loss = -entropy.mean()
+            entropy_loss = -entropy.mean()
+
+                # loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss
+            loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss
+
+                # self.optimizer.zero_grad()
+            self.optimizer.zero_grad()
+                # loss.backward()
+            loss.backward()
+                # torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), self.max_grad_norm)
+            torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), self.max_grad_norm)
+                # self.optimizer.step()
+            self.optimizer.step()
 
         self.buffer.clear()
