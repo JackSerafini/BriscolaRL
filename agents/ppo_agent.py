@@ -7,12 +7,12 @@ import torch.optim as optim
 from briscola import Briscola
 
 LR = 3e-4
-GAMMA = 0.95
+GAMMA = 0.99
 GAE_LAMBDA = 0.95
 EPSILON_CLIP = 0.2
-EPOCHS = 4
-BATCH_SIZE = 256
-ENTROPY_COEF = 0.03
+EPOCHS = 3
+BATCH_SIZE = 512
+ENTROPY_COEF = 0.1
 VALUE_COEF = 0.5
 MAX_GRAD_NORM = 0.5
 
@@ -83,11 +83,14 @@ class ActorCritic(nn.Module):
         # TODO: understand if tanh is better than relu
         self.shared = nn.Sequential(
             nn.Linear(n_obs, 256),
-            nn.ReLU(),
+            # nn.ReLU(),
+            nn.Tanh(),
             nn.Linear(256, 256),
-            nn.ReLU(),
+            # nn.ReLU(),
+            nn.Tanh(),
             nn.Linear(256, 128),
-            nn.ReLU()
+            # nn.ReLU()
+            nn.Tanh(),
         )
 
         self.actor = nn.Linear(128, n_actions) # Policy or Model
@@ -162,9 +165,8 @@ class PPO_Agent():
         dist = torch.distributions.Categorical(logits = logits)
         action = dist.sample()
         log_prob = dist.log_prob(action)
-        entropy = dist.entropy()
 
-        return action.item(), mask, log_prob.item(), entropy, value.item()
+        return action.item(), mask, log_prob.item(), value.item()
 
     def _compute_GAE_rewardstg_and_advantages(self, last_value: float):
         """Generalized Advantage Estimation over the current rollout.  
@@ -204,6 +206,12 @@ class PPO_Agent():
             advantages, rewards_tg = self._compute_GAE_rewardstg_and_advantages(last_value)
         # Normalize advantages
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-9)
+
+        # Accumulate for logging
+        total_policy_loss = 0.0
+        total_value_loss = 0.0
+        total_entropy = 0.0
+        n_updates = 0
 
         indices = np.arange(steps)
         # N epochs of minibatch updates (EPOCHS = the number of times we reuse the SAME rollout data)
@@ -253,4 +261,17 @@ class PPO_Agent():
                 self.optimizer.step()
             # self.optimizer.step()
 
+                # Accumulate
+                total_policy_loss += policy_loss.item()
+                total_value_loss += value_loss.item()
+                total_entropy += (-entropy_loss).item()  # entropy_loss is negated, flip back
+                n_updates += 1
+
         self.buffer.clear()
+
+        # Return averages
+        return {
+            "policy_loss": total_policy_loss / n_updates,
+            "value_loss": total_value_loss / n_updates,
+            "entropy": total_entropy / n_updates,
+        }
