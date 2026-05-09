@@ -12,7 +12,7 @@ GAE_LAMBDA = 0.95
 EPSILON_CLIP = 0.2
 EPOCHS = 3
 BATCH_SIZE = 512
-ENTROPY_COEF = 0.05
+ENTROPY_COEF = 0.02
 VALUE_COEF = 0.5
 MAX_GRAD_NORM = 0.5
 
@@ -81,18 +81,33 @@ class ActorCritic(nn.Module):
         super(ActorCritic, self).__init__()
 
         # TODO: understand if tanh is better than relu
-        self.shared = nn.Sequential(
+        # self.shared = nn.Sequential(
+        #     nn.Linear(n_obs, 256),
+        #     nn.ReLU(),
+        #     # nn.Tanh(),
+        #     nn.Linear(256, 256),
+        #     nn.ReLU(),
+        #     # nn.Tanh(),
+        #     nn.Linear(256, 128),
+        #     nn.ReLU()
+        #     # nn.Tanh(),
+        # )
+        self.actor_shared = nn.Sequential(
             nn.Linear(n_obs, 256),
-            # nn.ReLU(),
-            nn.Tanh(),
+            nn.ReLU(),
             nn.Linear(256, 256),
-            # nn.ReLU(),
-            nn.Tanh(),
+            nn.ReLU(),
             nn.Linear(256, 128),
-            # nn.ReLU()
-            nn.Tanh(),
+            nn.ReLU()
         )
-
+        self.critic_shared = nn.Sequential(
+            nn.Linear(n_obs, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128),
+            nn.ReLU()
+        )
         self.actor = nn.Linear(128, n_actions) # Policy or Model
         self.critic = nn.Linear(128, 1) # The output is the value of the total expected return
         # -> at the end of training we expect this value to reach the best reward from that state
@@ -103,20 +118,19 @@ class ActorCritic(nn.Module):
 
         # TODO: understand if this is useful or not
         # Orthogonal init — standard for PPO
-        for layer in self.shared:
-            if isinstance(layer, nn.Linear):
-                nn.init.orthogonal_(layer.weight, gain=np.sqrt(2))
-                nn.init.zeros_(layer.bias)
-        nn.init.orthogonal_(self.actor.weight, gain=0.01)
-        nn.init.orthogonal_(self.critic.weight,  gain=1.0)
-        nn.init.zeros_(self.actor.bias)
-        nn.init.zeros_(self.critic.bias)
+        # for layer in self.shared:
+        #     if isinstance(layer, nn.Linear):
+        #         nn.init.orthogonal_(layer.weight, gain=np.sqrt(2))
+        #         nn.init.zeros_(layer.bias)
+        # nn.init.orthogonal_(self.actor.weight, gain=0.01)
+        # nn.init.orthogonal_(self.critic.weight,  gain=1.0)
+        # nn.init.zeros_(self.actor.bias)
+        # nn.init.zeros_(self.critic.bias)
 
     def forward(self, x):
-        x = self.shared(x)
-        # TODO: understand what is the difference
-        return self.actor(x), self.critic(x)
-        # return self.policy_head(x), self.value_head(x).squeeze(-1)
+        x_actor = self.actor_shared(x)
+        x_critic = self.critic_shared(x)
+        return self.actor(x_actor), self.critic(x_critic)
     
     
 class PPO_Agent():

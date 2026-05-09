@@ -185,8 +185,7 @@ class Briscola(gym.Env):
         self.played_cards.extend(self.table)
 
         trick_winner, points = self._evaluate_trick(first_card, second_card)
-        # TODO: capire come gestire i punti
-        # points = points / 10.0
+        points = points / 10
 
         # Map winner to actual player
         winner = first if trick_winner == "first" else second
@@ -208,10 +207,8 @@ class Briscola(gym.Env):
         if len(self.player_hand) == 0 and len(self.deck) == 0:
             self.terminated = True
 
-            # TODO: choose best reward for winning the game
-            sign = np.sign(self.player_score - 60)
-            reward += 200 * sign
-            # reward += 20 * sign
+            sign = np.sign(self.player_score - 6)
+            reward += 20 * sign
 
             obs = self._get_obs()
             return obs, reward, self.terminated, self.truncated, {}
