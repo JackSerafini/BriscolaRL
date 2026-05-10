@@ -152,9 +152,6 @@ class Briscola(gym.Env):
     
 
     def step(self, action):
-        assert not self.terminated
-        # assert not self.truncated
-
         card = (action // 10, (action % 10) + 1)
         if card not in self.player_hand:
             raise ValueError("Invalid action")

@@ -6,13 +6,17 @@ import torch.optim as optim
 
 from briscola import Briscola
 
+# TODO: choose best hyperparameters
 LR = 3e-4
 GAMMA = 0.99
 GAE_LAMBDA = 0.95
 EPSILON_CLIP = 0.2
-EPOCHS = 3
-BATCH_SIZE = 512
-ENTROPY_COEF = 0.02
+# EPOCHS = 3
+EPOCHS = 10
+# BATCH_SIZE = 512
+BATCH_SIZE = 64
+# ENTROPY_COEF = 0.02
+ENTROPY_COEF = 0.01
 VALUE_COEF = 0.5
 MAX_GRAD_NORM = 0.5
 
@@ -79,19 +83,7 @@ def state_to_tensor(state):
 class ActorCritic(nn.Module):
     def __init__(self, n_obs= 125, n_actions = 40):
         super(ActorCritic, self).__init__()
-
-        # TODO: understand if tanh is better than relu
-        # self.shared = nn.Sequential(
-        #     nn.Linear(n_obs, 256),
-        #     nn.ReLU(),
-        #     # nn.Tanh(),
-        #     nn.Linear(256, 256),
-        #     nn.ReLU(),
-        #     # nn.Tanh(),
-        #     nn.Linear(256, 128),
-        #     nn.ReLU()
-        #     # nn.Tanh(),
-        # )
+        
         self.actor_shared = nn.Sequential(
             nn.Linear(n_obs, 256),
             nn.ReLU(),
@@ -110,22 +102,13 @@ class ActorCritic(nn.Module):
         )
         self.actor = nn.Linear(128, n_actions) # Policy or Model
         self.critic = nn.Linear(128, 1) # The output is the value of the total expected return
-        # -> at the end of training we expect this value to reach the best reward from that state
-        # Basically, given the state s, we compute the estimation of the total expected return,
-        # and each episode should improve this estimation until reach of the best value
-        # (at the beginning of training the value will be random, as are the weights)
-        # -> value used to improve the actor network
-
-        # TODO: understand if this is useful or not
-        # Orthogonal init — standard for PPO
-        # for layer in self.shared:
-        #     if isinstance(layer, nn.Linear):
-        #         nn.init.orthogonal_(layer.weight, gain=np.sqrt(2))
-        #         nn.init.zeros_(layer.bias)
-        # nn.init.orthogonal_(self.actor.weight, gain=0.01)
-        # nn.init.orthogonal_(self.critic.weight,  gain=1.0)
-        # nn.init.zeros_(self.actor.bias)
-        # nn.init.zeros_(self.critic.bias)
+        """
+        -> at the end of training we expect this value to reach the best reward from that state
+        Basically, given the state s, we compute the estimation of the total expected return,
+        and each episode should improve this estimation until reach of the best value
+        (at the beginning of training the value will be random, as are the weights)
+        -> value used to improve the actor network
+        """
 
     def forward(self, x):
         x_actor = self.actor_shared(x)
@@ -235,50 +218,34 @@ class PPO_Agent():
                 idx = indices[start : start + self.batch_size]
 
                 logits, state_values = self.policy_net(states[idx])
-            # logits, state_values = self.policy_net(states)
                 mask = masks[idx]
                 logits = logits.masked_fill(~mask, float('-inf'))
-            # logits = logits.masked_fill(~masks, float('-inf'))
 
                 dist = torch.distributions.Categorical(logits = logits)
-            # dist = torch.distributions.Categorical(logits = logits)
                 logprobs = dist.log_prob(actions[idx])
-            # logprobs = dist.log_prob(actions)
                 entropy = dist.entropy()
-            # entropy = dist.entropy()
 
                 # Clipped surrogate loss
                 ratio = torch.exp(logprobs - old_logprobs[idx])
-            # ratio = torch.exp(logprobs - old_logprobs)
 
                 surr1 = ratio * advantages[idx]
-            # surr1 = ratio * advantages
                 surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantages[idx]
-            # surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
 
                 policy_loss = -torch.min(surr1, surr2).mean()
-            # policy_loss = -torch.min(surr1, surr2).mean()
                 value_loss = 0.5 * (state_values.squeeze() - rewards_tg[idx]).pow(2).mean()
-            # value_loss = 0.5 * (state_values.squeeze() - rewards_tg).pow(2).mean()
                 entropy_loss = -entropy.mean()
-            # entropy_loss = -entropy.mean()
 
                 loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss
-            # loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss
 
                 self.optimizer.zero_grad()
-            # self.optimizer.zero_grad()
                 loss.backward()
-            # loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), self.max_grad_norm)
-            # torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), self.max_grad_norm)
                 self.optimizer.step()
-            # self.optimizer.step()
 
                 # Accumulate
                 total_policy_loss += policy_loss.item()
                 total_value_loss += value_loss.item()
-                total_entropy += (-entropy_loss).item()  # entropy_loss is negated, flip back
+                total_entropy += (-entropy_loss).item() # entropy_loss is negated, flip back
                 n_updates += 1
 
         self.buffer.clear()
