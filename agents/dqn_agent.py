@@ -142,13 +142,6 @@ class DQN_Agent():
         q_values = self.policy_net(state_batch).gather(1, action_batch)
         next_q_values = torch.zeros(self.batch_size, device = self.device)
         with torch.no_grad():
-            # TODO: capire le differenze a livello di training
-            # next_actions = self.policy_net(non_final_next_states)
-            # next_actions[non_final_next_masks == 0] = -1e9
-            # next_actions = next_actions.max(1)[1].unsqueeze(1)
-
-            # next_q = self.target_net(non_final_next_states)
-            # next_q_values[non_final_mask] = next_q.gather(1, next_actions).squeeze(1)
             next_q = self.target_net(non_final_next_states)
             next_q[non_final_next_masks == 0] = -1e9
             next_q_values[non_final_mask] = next_q.max(1)[0]

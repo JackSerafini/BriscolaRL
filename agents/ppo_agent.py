@@ -6,17 +6,13 @@ import torch.optim as optim
 
 from briscola import Briscola
 
-# TODO: choose best hyperparameters
 LR = 3e-4
 GAMMA = 0.99
 GAE_LAMBDA = 0.95
 EPSILON_CLIP = 0.2
-# EPOCHS = 3
-EPOCHS = 10
-# BATCH_SIZE = 512
-BATCH_SIZE = 64
-# ENTROPY_COEF = 0.02
-ENTROPY_COEF = 0.01
+EPOCHS = 5
+BATCH_SIZE = 256
+ENTROPY_COEF = 0.02
 VALUE_COEF = 0.5
 MAX_GRAD_NORM = 0.5
 
@@ -233,9 +229,9 @@ class PPO_Agent():
 
                 policy_loss = -torch.min(surr1, surr2).mean()
                 value_loss = 0.5 * (state_values.squeeze() - rewards_tg[idx]).pow(2).mean()
-                entropy_loss = -entropy.mean()
+                entropy_loss = entropy.mean()
 
-                loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss
+                loss = policy_loss + self.value_coef * value_loss - self.entropy_coef * entropy_loss
 
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -245,7 +241,7 @@ class PPO_Agent():
                 # Accumulate
                 total_policy_loss += policy_loss.item()
                 total_value_loss += value_loss.item()
-                total_entropy += (-entropy_loss).item() # entropy_loss is negated, flip back
+                total_entropy += entropy_loss.item() # entropy_loss is negated, flip back
                 n_updates += 1
 
         self.buffer.clear()

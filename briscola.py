@@ -9,9 +9,6 @@ POINTS = {1: 11, 3: 10, 8: 2, 9: 3, 10: 4}
 
 STRENGTH = {1: 10, 3: 9, 10: 8, 9: 7, 8: 6, 7: 5, 6: 4, 5: 3, 4: 2, 2: 1}
 
-PLAYER = 0
-OPPONENT = 1
-
 class Briscola(gym.Env):
     def __init__(self):
         super().__init__()
@@ -33,6 +30,8 @@ class Briscola(gym.Env):
         self.played_cards = []
         self.briscola_card = None
         self.briscola_suit = None
+
+        self.opponent_agent = None
     
     def _create_deck(self):
         return [(suit, rank) for suit in SUITS for rank in RANKS]
@@ -48,7 +47,22 @@ class Briscola(gym.Env):
         self.briscola_suit = self.briscola_card[0]
 
     def _opponent_policy(self):
-        return random.choice(self.opponent_hand)
+        if self.opponent_agent == None:
+            return random.choice(self.opponent_hand)
+        
+        state = {
+            "hand": self._encode_cards(self.opponent_hand),
+            "table_card": self._encode_cards(self.table),
+            "briscola": self._encode_suit(self.briscola_suit),
+            "played_cards": self._encode_cards(self.played_cards),
+            "is_first": np.array([1 if len(self.table) == 0 else 0], dtype=np.int8),
+        }
+
+        result = self.opponent_agent.select_action(state)
+        action = result[0] if isinstance(result, tuple) else result.item()
+        card = (action // 10, (action % 10) + 1)
+
+        return card
 
     def _evaluate_trick(self, first_card, second_card):
         suit1, rank1 = first_card
