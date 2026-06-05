@@ -91,9 +91,7 @@ class DQN_Agent():
         self.buffer = ReplayMemory(buffer_size)
 
     def select_action(self, state):
-        """
-        After all, hand is already by itself a mask of the possible actions (available cards)
-        """
+        # After all, hand is already by itself a mask of the possible actions (available cards)
         # self.epsilon = max(self.eps_end, self.epsilon * self.eps_decay)
 
         # EXPLOIT

@@ -241,7 +241,7 @@ class PPO_Agent():
                 # Accumulate
                 total_policy_loss += policy_loss.item()
                 total_value_loss += value_loss.item()
-                total_entropy += entropy_loss.item() # entropy_loss is negated, flip back
+                total_entropy += entropy_loss.item()
                 n_updates += 1
 
         self.buffer.clear()
