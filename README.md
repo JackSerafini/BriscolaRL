@@ -27,20 +27,20 @@ BriscolaRL/
 ├── models/            # Saved model weights (.pt)
 ├── outputs/           # Training logs and plots
 ├── train.ipynb        # Training notebook
-└── evaluate.ipynb     # Evaluation notebook (win rate, score breakdown)
+├── evaluate.ipynb     # Evaluation notebook (win rate, score breakdown)
+└── plots.ipynb        # Evaluation notebook (win rate, score breakdown)
 ```
 
 ## Agents
 
 ### DQN
-- Double DQN to reduce overestimation bias
 - Experience replay buffer (100k transitions)
 - Soft target network updates (τ = 0.005)
 - Action masking via hand encoding (invalid cards → Q = −∞)
 - ε-greedy exploration with multiplicative decay
 
 ### PPO
-- Actor-Critic with shared trunk
+- Actor-Critic architecture
 - Generalized Advantage Estimation (GAE, λ = 0.95)
 - Clipped surrogate objective (ε = 0.2)
 - Action masking via `masked_fill` before `Categorical(logits=...)`
@@ -64,12 +64,9 @@ pip install torch gymnasium numpy
 
 ## Results
 
-| Agent | Win Rate | Avg Score (wins) |
-|-------|----------|-----------------|
-| Random baseline | ~50% | ~63 |
-| DQN | ~85% | — |
-| PPO | ~62% | ~80 |
+| Agent   | Random |   DQN | PPO (500K) | PPO (1000K) | DQN (Auto-500K) | PPO (Auto-1000K) |
+| ------- | -----: | ----: | ---------: | ----------: | --------------: | ---------------: |
+| **DQN** |  89.1% |  ~50% |      58.7% |       53.6% |           66.8% |            50.8% |
+| **PPO** |  87.5% | 44.7% |      53.8% |        ~50% |           64.6% |            47.5% |
 
-*Evaluated over 10,000 episodes against a random opponent.*
-
-> Note: results are preliminary: training is ongoing.
+*Evaluated over 10,000 episodes.*
