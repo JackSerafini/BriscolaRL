@@ -28,7 +28,7 @@ BriscolaRL/
 ├── outputs/           # Training logs and plots
 ├── train.ipynb        # Training notebook
 ├── evaluate.ipynb     # Evaluation notebook (win rate, score breakdown)
-└── plots.ipynb        # Evaluation notebook (win rate, score breakdown)
+└── plots.ipynb        # Plot notebook
 ```
 
 ## Agents
